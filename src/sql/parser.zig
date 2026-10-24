@@ -77,8 +77,13 @@ pub const Parser = struct {
         if (!self.acceptWord(expected)) return Error.UnexpectedToken;
     }
     fn word(self: *Parser) ![]const u8 {
-        if (self.current().tag != .word) return Error.UnexpectedToken;
-        return self.advance().text;
+        const cur = self.current();
+        if (cur.tag != .word and cur.tag != .string) return Error.UnexpectedToken;
+        const text = self.advance().text;
+        if (text.len >= 2 and (text[0] == '\'' or text[0] == '"' or text[0] == '`' or text[0] == '[')) {
+            return text[1 .. text.len - 1];
+        }
+        return text;
     }
 
     fn identifierOrNumber(self: *Parser) ![]const u8 {

@@ -5795,10 +5795,9 @@ pub const Connection = struct {
                         hasWindow = true;
                         try columns.append(self.allocator, projection.alias orelse w.funcName);
                     },
-                    else => {},
+                    else => try columns.append(self.allocator, projection.alias orelse "?column?"),
                 }
             }
-            if (columns.items.len == 0) for (value.projections) |projection| try columns.append(self.allocator, projection.alias orelse "?column?");
             var rows = std.ArrayList([]Value).empty;
             errdefer {
                 for (rows.items) |row| self.allocator.free(row);
@@ -17695,4 +17694,42 @@ test "EXPLAIN produces real VM bytecode program" {
     defer explainDel.deinit();
     try std.testing.expectEqual(@as(usize, 8), explainDel.columns.len);
     try std.testing.expect(explainDel.count() > 0);
+}
+
+test "view with CASE and function projections column count" {
+    const path = "sqlite_zig_view_case_test.db";
+    var db = try freshDb(path);
+    defer dropDb(db, path);
+
+    _ = try db.exec(
+        \\CREATE TABLE log(
+        \\    id INTEGER PRIMARY KEY,
+        \\    timestamp INTEGER NOT NULL,
+        \\    level INTEGER NOT NULL,
+        \\    message TEXT NOT NULL
+        \\);
+        \\INSERT INTO log VALUES (1, 1720000000, 2, 'hello');
+        \\CREATE VIEW view_log AS
+        \\SELECT
+        \\    id,
+        \\    datetime(timestamp, 'unixepoch') AS timestamp,
+        \\    CASE level
+        \\        WHEN 0 THEN 'err'
+        \\        WHEN 1 THEN 'warn'
+        \\        WHEN 2 THEN 'info'
+        \\        ELSE 'other'
+        \\    END AS level,
+        \\    message
+        \\FROM log;
+    );
+
+    var res = try db.exec("SELECT * FROM view_log;");
+    defer res.deinit();
+    try std.testing.expectEqual(@as(usize, 4), res.columns.len);
+    try std.testing.expectEqualStrings("id", res.columns[0]);
+    try std.testing.expectEqualStrings("timestamp", res.columns[1]);
+    try std.testing.expectEqualStrings("level", res.columns[2]);
+    try std.testing.expectEqualStrings("message", res.columns[3]);
+    try std.testing.expectEqual(@as(usize, 1), res.rows.len);
+    try std.testing.expectEqualStrings("info", res.rows[0][2].text);
 }
