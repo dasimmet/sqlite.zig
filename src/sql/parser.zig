@@ -657,6 +657,8 @@ pub const Parser = struct {
                     errdefer names.deinit(self.allocator);
                     while (true) {
                         try names.append(self.allocator, try self.word());
+                        if (self.acceptWord("collate")) _ = try self.word();
+                        if (self.acceptWord("asc") or self.acceptWord("desc")) {}
                         if (!self.acceptTag(.comma)) break;
                     }
                     try self.requireTag(.rparen);

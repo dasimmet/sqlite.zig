@@ -1584,6 +1584,52 @@ pub const Schema = struct {
         try table.rows.append(self.allocator, .{ .values = owned });
     }
 
+    /// Append a row without constraint validation (used by sqlite_image decode).
+    pub fn appendRowRaw(self: *Schema, table: *Table, values: []const Value) !void {
+        if (values.len != table.columns.len) return error.ColumnCountMismatch;
+        const owned = try self.allocator.alloc(Value, values.len);
+        errdefer self.allocator.free(owned);
+        var count: usize = 0;
+        errdefer for (owned[0..count]) |value| freeValue(self.allocator, value);
+        for (values, 0..) |value, index| {
+            owned[index] = try self.copyValue(value);
+            count += 1;
+        }
+
+        var anyVirtual = false;
+        for (table.columns) |col| {
+            if (col.generatedExpr != null) {
+                anyVirtual = true;
+                break;
+            }
+        }
+        if (anyVirtual) {
+            var colNames = try self.allocator.alloc([]const u8, table.columns.len);
+            defer self.allocator.free(colNames);
+            for (table.columns, 0..) |col, idx| colNames[idx] = col.name;
+
+            var pass: usize = 0;
+            while (pass < table.columns.len) : (pass += 1) {
+                var anyChanged = false;
+                for (table.columns, 0..) |col, index| {
+                    if (col.generatedExpr) |genExpr| {
+                        const genVal = try exprEvaluator.eval(self.allocator, colNames, owned, genExpr);
+                        if (!owned[index].sameValue(genVal)) {
+                            freeValue(self.allocator, owned[index]);
+                            owned[index] = genVal;
+                            anyChanged = true;
+                        } else {
+                            freeValue(self.allocator, genVal);
+                        }
+                    }
+                }
+                if (!anyChanged) break;
+            }
+        }
+
+        try table.rows.append(self.allocator, .{ .values = owned });
+    }
+
     /// Validate a proposed in-place row update (AUTOINCREMENT/rowid/STRICT/
     /// NOT NULL/constraints, ignoring the row itself for uniqueness). The
     /// caller applies the mutation only on success.

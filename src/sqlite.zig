@@ -9,6 +9,8 @@ const connection = @import("connection/connection.zig");
 /// Open a database at `path` (borrowed). Returns an owned `Connection` that
 /// must be `close`d; it must outlive every result/statement/handle from it.
 pub const open = Connection.open;
+/// Open a database from SQLite image bytes in memory (borrowed).
+pub const openBytes = Connection.openBytes;
 /// Owned live database connection; see `connection/connection.zig`.
 pub const Connection = connection.Connection;
 /// Owned eagerly materialized result; caller `deinit`s (idempotent).

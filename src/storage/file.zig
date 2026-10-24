@@ -5,6 +5,7 @@
 //! rejected before allocating. Page size is a power of two in 512..32768.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Header = @import("../format/header.zig").Header;
 const headerSize = @import("../format/header.zig").size;
@@ -25,7 +26,124 @@ pub const maxImageBytes: usize = 256 * 1024 * 1024;
 /// Lifetime: created by `open`, released by `close`. The `threaded` IO
 /// context must outlive `file`; both are torn down in `close`, so no method
 /// may be called after `close`.
-pub const DatabaseFile = struct {
+pub const DatabaseFile = if (builtin.os.tag == .freestanding) struct {
+    allocator: std.mem.Allocator,
+    path: []u8 = &[_]u8{},
+    pageSize: usize = pageSizeDefault,
+    userVersion: u32 = 0,
+    applicationId: u32 = 0,
+    schemaVersion: u32 = 1,
+    walEnabled: bool = false,
+    changeCounter: u32 = 0,
+
+    pub fn open(allocator: std.mem.Allocator, path: []const u8) !DatabaseFile {
+        _ = allocator;
+        _ = path;
+        return error.Unsupported;
+    }
+
+    pub fn initMemory(allocator: std.mem.Allocator) DatabaseFile {
+        return .{
+            .allocator = allocator,
+            .path = &[_]u8{},
+            .pageSize = pageSizeDefault,
+        };
+    }
+
+    pub fn close(self: *DatabaseFile) void {
+        _ = self;
+    }
+
+    pub fn syncFile(self: *DatabaseFile) !void {
+        _ = self;
+    }
+
+    pub fn readPage(self: *DatabaseFile, pageNumber: u32) ![]u8 {
+        _ = self;
+        _ = pageNumber;
+        return error.Unsupported;
+    }
+
+    pub fn writePage(self: *DatabaseFile, pageNumber: u32, bytes: []const u8) !void {
+        _ = self;
+        _ = pageNumber;
+        _ = bytes;
+    }
+
+    pub fn readBytes(self: *DatabaseFile, offset: u64, length: usize) ![]u8 {
+        _ = self;
+        _ = offset;
+        _ = length;
+        return error.Unsupported;
+    }
+
+    pub fn writePayload(self: *DatabaseFile, payload: []const u8) !void {
+        _ = self;
+        _ = payload;
+    }
+
+    pub fn readPayload(self: *DatabaseFile) !?[]u8 {
+        _ = self;
+        return null;
+    }
+
+    pub fn readImage(self: *DatabaseFile) ![]u8 {
+        _ = self;
+        return error.Unsupported;
+    }
+
+    pub fn writeImage(self: *DatabaseFile, bytes: []u8) !void {
+        _ = self;
+        _ = bytes;
+    }
+
+    pub fn syncImage(self: *DatabaseFile, bytes: []u8) !void {
+        _ = self;
+        _ = bytes;
+    }
+
+    pub fn getUserVersion(self: *const DatabaseFile) u32 {
+        return self.userVersion;
+    }
+
+    pub fn setUserVersion(self: *DatabaseFile, version: u32) void {
+        self.userVersion = version;
+    }
+
+    pub fn getApplicationId(self: *const DatabaseFile) u32 {
+        return self.applicationId;
+    }
+
+    pub fn setApplicationId(self: *DatabaseFile, applicationId: u32) void {
+        self.applicationId = applicationId;
+    }
+
+    pub fn getSchemaVersion(self: *const DatabaseFile) u32 {
+        return self.schemaVersion;
+    }
+
+    pub fn setSchemaVersion(self: *DatabaseFile, version: u32) void {
+        self.schemaVersion = version;
+    }
+
+    pub fn checkpointWal(self: *DatabaseFile) !struct { busy: u32, log: u32, checkpointed: u32 } {
+        _ = self;
+        return .{ .busy = 0, .log = 0, .checkpointed = 0 };
+    }
+
+    pub fn enableWal(self: *DatabaseFile) void {
+        _ = self;
+    }
+
+    pub fn journalMode(self: *const DatabaseFile) []const u8 {
+        _ = self;
+        return "memory";
+    }
+
+    pub fn disableWal(self: *DatabaseFile) !void {
+        _ = self;
+    }
+} else struct {
     /// Allocator for `path` and all caller-owned read buffers.
     allocator: std.mem.Allocator,
     /// Owned copy of the open path (also the base for the `-wal` path).
@@ -508,6 +626,10 @@ pub const DatabaseFile = struct {
         const path = try self.walPath();
         defer self.allocator.free(path);
         try Io.Dir.cwd().deleteFile(self.threaded.io(), path);
+    }
+
+    pub fn syncFile(self: *DatabaseFile) !void {
+        try self.file.sync(self.threaded.io());
     }
 };
 

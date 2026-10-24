@@ -1221,7 +1221,14 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !Schema {
             }
         }
 
+        const aliasCol = Schema.rowidAliasColumn(table);
+        try table.rows.ensureUnusedCapacity(allocator, tableRows.items.len);
         for (tableRows.items) |row| {
+            if (aliasCol) |alias| {
+                if (alias < row.values.len and row.values[alias] == .null) {
+                    row.values[alias] = .{ .integer = @intCast(row.rowid) };
+                }
+            }
             if (hasVirtual and row.values.len == storedCount) {
                 const expanded = try allocator.alloc(Value, table.columns.len);
                 defer allocator.free(expanded);
@@ -1234,9 +1241,9 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !Schema {
                         srcIdx += 1;
                     }
                 }
-                try schema.appendRow(table, expanded);
+                try schema.appendRowRaw(table, expanded);
             } else {
-                try schema.appendRow(table, row.values);
+                try schema.appendRowRaw(table, row.values);
             }
         }
     }

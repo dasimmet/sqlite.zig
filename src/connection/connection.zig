@@ -1,4 +1,5 @@
 //! Engine facade: `Connection` runs SQL against file-backed schemas.
+const builtin = @import("builtin");
 const reflectionCompat = @import("../compat.zig");
 const std = @import("std");
 const DatabaseFile = @import("../storage/file.zig").DatabaseFile;
@@ -133,6 +134,28 @@ pub const Connection = struct {
         return connection;
     }
 
+    pub fn openBytes(allocator: std.mem.Allocator, bytes: []const u8) !*Connection {
+        const connection = try allocator.create(Connection);
+        const file: DatabaseFile = if (@hasDecl(DatabaseFile, "initMemory"))
+            DatabaseFile.initMemory(allocator)
+        else
+            return error.Unsupported;
+        connection.* = .{
+            .allocator = allocator,
+            .file = file,
+            .store = Schema.init(allocator),
+            .tempStore = Schema.init(allocator),
+            .savepoints = .empty,
+        };
+        errdefer connection.close();
+        if (bytes.len > 100) {
+            const decoded = try sqliteImage.decode(allocator, bytes);
+            connection.store.deinit();
+            connection.store = decoded;
+        }
+        return connection;
+    }
+
     /// Closes the handle: rolls back an open transaction, persists schemas,
     /// frees snapshots, temp/attached state, and the file, then destroys the
     /// handle. Never use the connection afterwards; owned `Result`s dangle.
@@ -171,10 +194,11 @@ pub const Connection = struct {
     }
 
     fn persistSchema(self: *Connection, file: *DatabaseFile, store: *Schema) !void {
+        if (builtin.os.tag == .freestanding) return;
         const bytes = try sqliteImage.encodeWithPageSize(self.allocator, store, file.pageSize);
         defer self.allocator.free(bytes);
         if (self.synchronousLevel >= 2) try file.syncImage(bytes) else try file.writeImage(bytes);
-        if (self.synchronousLevel >= 3) try file.file.sync(file.threaded.io());
+        if (self.synchronousLevel >= 3) try file.syncFile();
     }
 
     fn clearAttachedBackup(self: *Connection, backups: *std.ArrayList(AttachedBackup)) void {
@@ -1625,7 +1649,7 @@ pub const Connection = struct {
                     try self.persistSchema(target.file, target.store);
                 } else if (std.ascii.eqlIgnoreCase(mode, "delete") or std.ascii.eqlIgnoreCase(mode, "rollback")) {
                     try target.file.disableWal();
-                    if (self.synchronousLevel >= 1) try target.file.file.sync(target.file.threaded.io());
+                    if (self.synchronousLevel >= 1) try target.file.syncFile();
                     try self.persistSchema(target.file, target.store);
                 } else return error.Unsupported;
             }
@@ -1806,7 +1830,7 @@ pub const Connection = struct {
                 if (!std.ascii.eqlIgnoreCase(mode, "passive") and !std.ascii.eqlIgnoreCase(mode, "full") and !std.ascii.eqlIgnoreCase(mode, "restart") and !std.ascii.eqlIgnoreCase(mode, "truncate")) return error.InvalidSql;
             }
             const checkpoint = try target.file.checkpointWal();
-            if (self.synchronousLevel >= 1) try target.file.file.sync(target.file.threaded.io());
+            if (self.synchronousLevel >= 1) try target.file.syncFile();
             const names = [_][]const u8{ "busy", "log", "checkpointed" };
             const columns = try self.ownedColumns(&names);
             const rows = try self.allocator.alloc([]Value, 1);
@@ -2359,6 +2383,7 @@ pub const Connection = struct {
             };
             if (target.len == 0) return error.InvalidSql;
             if (std.ascii.eqlIgnoreCase(target, vacuumFile.path)) return error.InvalidSql;
+            if (builtin.os.tag == .freestanding) return error.Unsupported;
             const bytes = try sqliteImage.encodeWithPageSize(self.allocator, vacuumStore, vacuumFile.pageSize);
             defer self.allocator.free(bytes);
             const io = vacuumFile.threaded.io();
@@ -2497,6 +2522,7 @@ pub const Connection = struct {
     }
 
     fn checkStoredImage(self: *Connection, rows: *std.ArrayList([]Value), cap: usize, scope: ?[]const u8) !void {
+        if (builtin.os.tag == .freestanding) return;
         const stat = try self.file.file.stat(self.file.threaded.io());
         const bytes = try self.file.readBytes(0, @intCast(stat.size));
         defer self.allocator.free(bytes);
