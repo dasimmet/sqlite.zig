@@ -1961,6 +1961,8 @@ pub const Parser = struct {
                     kind = .full;
                 } else if (self.acceptWord("cross")) {
                     kind = .cross;
+                } else if (self.acceptTag(.comma)) {
+                    kind = .cross;
                 }
                 if (kind == null and !natural and !self.acceptWord("join")) break;
                 _ = self.acceptWord("join");
@@ -3268,4 +3270,66 @@ test "parser enforces the column budget" {
     var ok_stmt = try ok_p.parse();
     defer ast.deinit(std.testing.allocator, &ok_stmt);
     try std.testing.expectEqual(@as(usize, 2000), ok_stmt.createTable.columns.len);
+}
+
+test "parse view_manifest_tree_reverse" {
+    var p = try Parser.init(std.testing.allocator,
+        \\CREATE VIEW view_manifest_tree_reverse AS WITH RECURSIVE manifest_tree_reverse(
+        \\    start_repository,
+        \\    start_revision,
+        \\    depth,
+        \\    depname,
+        \\    id,
+        \\    repository,
+        \\    revision,
+        \\    path,
+        \\    name,
+        \\    fingerprint,
+        \\    minimum_zig_version
+        \\) AS (
+        \\    SELECT
+        \\        T0.repository AS start_repository,
+        \\        T0.revision AS start_revision,
+        \\        0 AS depth,
+        \\        '' AS depname,
+        \\        0 AS id,
+        \\        T0.repository AS repository,
+        \\        T0.revision AS revision,
+        \\        '' AS path,
+        \\        '' AS name,
+        \\        0 AS fingerprint,
+        \\        '' AS minimum_zig_version
+        \\    FROM
+        \\        dependency_resolved T0
+        \\    UNION
+        \\    ALL
+        \\    SELECT
+        \\        T2.start_repository,
+        \\        T2.start_revision,
+        \\        T2.depth + 1,
+        \\        T1.name,
+        \\        T3.id,
+        \\        T3.repository,
+        \\        T3.revision,
+        \\        T3.path,
+        \\        T3.name,
+        \\        T3.fingerprint,
+        \\        T3.minimum_zig_version
+        \\    FROM
+        \\        dependency_resolved T1,
+        \\        manifest_tree_reverse T2
+        \\        JOIN manifest T3 ON T3.id = T1.manifest
+        \\    WHERE
+        \\        T1.repository = T2.repository
+        \\        AND T1.revision = T2.revision
+        \\        AND NOT T2.id = T1.manifest
+        \\)
+        \\SELECT
+        \\    T0.start_repository
+        \\FROM
+        \\    manifest_tree_reverse T0;
+    );
+    defer p.deinit();
+    var s = try p.parse();
+    defer ast.deinit(std.testing.allocator, &s);
 }
