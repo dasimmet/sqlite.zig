@@ -5661,11 +5661,37 @@ pub const Connection = struct {
                 var scope = try self.materializeDerivedTable(ephemeralName, &source);
                 defer scope.deinit();
                 var subValue = value;
+                if (subValue.tableAlias == null) {
+                    subValue.tableAlias = tableName;
+                }
                 subValue.table = ephemeralName;
                 return self.selectWithOuter(subValue, parameters, outer);
             };
             const tbl = resolved.table;
             if (value.joins.len != 0) {
+                for (value.joins, 0..) |join, joinIdx| {
+                    if (self.resolveTableName(join.table) == null) {
+                        if (self.resolveViewName(join.table)) |resolvedView| {
+                            const view = resolvedView.view;
+                            var source = try self.execute(view.sql, parameters);
+                            defer source.deinit();
+                            const ephemeralName = try std.fmt.allocPrint(self.allocator, "__view_join_{d}_{s}", .{ joinIdx, join.table });
+                            defer self.allocator.free(ephemeralName);
+                            var scope = try self.materializeDerivedTable(ephemeralName, &source);
+                            defer scope.deinit();
+                            var newJoins = try self.allocator.alloc(ast.Join, value.joins.len);
+                            defer self.allocator.free(newJoins);
+                            @memcpy(newJoins, value.joins);
+                            if (newJoins[joinIdx].tableAlias == null) {
+                                newJoins[joinIdx].tableAlias = newJoins[joinIdx].table;
+                            }
+                            newJoins[joinIdx].table = ephemeralName;
+                            var subValue = value;
+                            subValue.joins = newJoins;
+                            return self.selectWithOuter(subValue, parameters, outer);
+                        }
+                    }
+                }
                 // Multi-key or non-identifier GROUP BY over a join needs the
                 // expression path; single bare/qualified identifier keys keep
                 // the existing `collectJoinGrouped` fast path.
@@ -17732,4 +17758,26 @@ test "view with CASE and function projections column count" {
     try std.testing.expectEqualStrings("message", res.columns[3]);
     try std.testing.expectEqual(@as(usize, 1), res.rows.len);
     try std.testing.expectEqualStrings("info", res.rows[0][2].text);
+}
+
+test "joining views" {
+    const path = "sqlite_zig_view_join_test.db";
+    var db = try freshDb(path);
+    defer dropDb(db, path);
+
+    _ = try db.exec(
+        \\CREATE TABLE repo (id INTEGER PRIMARY KEY, name TEXT);
+        \\CREATE TABLE stat (repo_id INTEGER, stars INTEGER);
+        \\INSERT INTO repo VALUES (1, 'zig-sqlite');
+        \\INSERT INTO stat VALUES (1, 42);
+        \\CREATE VIEW v_repo AS SELECT id, name FROM repo;
+        \\CREATE VIEW v_stat AS SELECT repo_id, stars FROM stat;
+        \\CREATE VIEW v_full AS SELECT r.id, r.name, s.stars FROM v_repo r JOIN v_stat s ON s.repo_id = r.id;
+    );
+
+    var res = try db.exec("SELECT * FROM v_full;");
+    defer res.deinit();
+    try std.testing.expectEqual(@as(usize, 3), res.columns.len);
+    try std.testing.expectEqualStrings("zig-sqlite", res.rows[0][1].text);
+    try std.testing.expectEqual(@as(i64, 42), res.rows[0][2].integer);
 }
