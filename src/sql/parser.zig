@@ -541,10 +541,14 @@ pub const Parser = struct {
             const name = try self.tableName();
             try self.requireWord("as");
             const start = self.current().position;
-            try self.requireWord("select");
-            var selectStatement = try self.parseSelect();
-            defer ast.deinit(self.allocator, &selectStatement);
-            if (selectStatement != .select) {
+            var bodyStatement = if (self.acceptWord("with"))
+                try self.parseWith()
+            else blk: {
+                try self.requireWord("select");
+                break :blk try self.parseSelect();
+            };
+            defer ast.deinit(self.allocator, &bodyStatement);
+            if (bodyStatement != .select and bodyStatement != .withSelect) {
                 return Error.InvalidSql;
             }
             const end = self.current().position;

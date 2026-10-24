@@ -17781,3 +17781,26 @@ test "joining views" {
     try std.testing.expectEqualStrings("zig-sqlite", res.rows[0][1].text);
     try std.testing.expectEqual(@as(i64, 42), res.rows[0][2].integer);
 }
+
+test "create view with recursive cte" {
+    const path = "sqlite_zig_view_cte_test.db";
+    var db = try freshDb(path);
+    defer dropDb(db, path);
+
+    _ = try db.exec(
+        \\CREATE TABLE base (id INTEGER, parent INTEGER);
+        \\INSERT INTO base VALUES (1, 0), (2, 1), (3, 2);
+        \\CREATE VIEW v_tree AS
+        \\WITH RECURSIVE tree(id, depth) AS (
+        \\    SELECT id, 0 FROM base WHERE parent = 0
+        \\    UNION ALL
+        \\    SELECT b.id, t.depth + 1 FROM base b JOIN tree t ON b.parent = t.id
+        \\)
+        \\SELECT * FROM tree;
+    );
+
+    var res = try db.exec("SELECT * FROM v_tree;");
+    defer res.deinit();
+    try std.testing.expectEqual(@as(usize, 2), res.columns.len);
+    try std.testing.expectEqual(@as(usize, 3), res.rows.len);
+}
