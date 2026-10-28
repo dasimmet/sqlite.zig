@@ -1527,7 +1527,7 @@ pub const Connection = struct {
             },
             else => {},
         }
-        if (!self.transactionActive and !statement.isQuery()) try self.persist();
+        if (!self.transactionActive and !statement.isQuery() and self.synchronousLevel > 0) try self.persist();
         return result;
     }
 
